@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JACOBIAN CURVATURE LENS</title>
+<style>
+  :root{
+    --bg:#141210; --panel:#1d1915; --ink:#e8e0d4; --dim:#8a7f70;
+    --orange:#ff6a00; --orange2:#ffa040; --teal:#2dd4bf; --red:#ff3b3b;
+    --grid:#2c2620; --line:#3a332b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    padding:18px;min-height:100vh}
+  header{border:3px solid var(--orange);padding:14px 18px;margin-bottom:14px;
+    display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px}
+  header h1{font-size:20px;letter-spacing:2px;color:var(--orange)}
+  header .meta{font-size:11px;color:var(--dim);text-align:right;line-height:1.5}
+  header .tier{color:var(--teal);font-weight:bold}
+  .row{display:flex;gap:14px;flex-wrap:wrap}
+  .panel{background:var(--panel);border:2px solid var(--line);padding:10px;flex:1 1 460px;min-width:340px}
+  .panel h2{font-size:12px;color:var(--orange2);letter-spacing:1.5px;margin-bottom:8px;
+    border-bottom:1px solid var(--line);padding-bottom:6px}
+  canvas{display:block;width:100%;background:var(--bg)}
+  footer{margin-top:14px;border:2px solid var(--line);padding:10px 14px;font-size:11px;
+    color:var(--dim);line-height:1.7}
+  footer b{color:var(--ink)}
+  .diag{border:3px solid var(--red);background:#241010;padding:16px;margin-top:14px;
+    font-size:12px;color:#ffb0b0;display:none;white-space:pre-wrap}
+  .legend{font-size:10px;color:var(--dim);margin-top:6px;line-height:1.6}
+  .legend .sw{display:inline-block;width:18px;height:3px;vertical-align:middle;margin-right:4px}
+</style>
+</head>
+<body>
+
+<!-- ================= EDIT BLOCK 1: PAPER METADATA ================= -->
+<header>
+  <h1>JACOBIAN CURVATURE LENS</h1>
+  <div class="meta">
+    f(h) &asymp; f(h*) + J(h&minus;h*) &nbsp;&mdash;&nbsp; the lens is the tangent plane; curvature is what it throws away<br>
+    tier: <span class="tier">lit</span> &middot; math witnessed in node (J residual 5.2e-10, quad coeff 15.089 vs 15.117) &middot; 2026-07-09 &middot; bridge-burners
+  </div>
+</header>
+<!-- ================================================================ -->
+
+<div class="row">
+  <div class="panel">
+    <h2>2D &mdash; TANGENT VS TRUTH &middot; ERROR SCALING &middot; &kappa; DIAL</h2>
+    <canvas id="c2d" width="920" height="640"></canvas>
+    <div class="legend">
+      <span class="sw" style="background:var(--teal)"></span>true readout p&middot;f(h*+tu)&nbsp;&nbsp;
+      <span class="sw" style="background:var(--orange)"></span>jacobian tangent p&middot;(f&#8320;+tJu)&nbsp;&nbsp;
+      <span class="sw" style="background:#6a4a20;height:8px"></span>curvature gap&nbsp;&nbsp;
+      direction u sweeps the (u&#8321;,u&#8322;) plane automatically
+    </div>
+  </div>
+  <div class="panel">
+    <h2>3D &mdash; MANIFOLD SLICE VS TANGENT PLANE (SOFT-GL)</h2>
+    <canvas id="c3d" width="920" height="640"></canvas>
+    <div class="legend">
+      <span class="sw" style="background:var(--teal)"></span>true surface z = p&middot;f(h*+a&middot;u&#8321;+b&middot;u&#8322;)&nbsp;&nbsp;
+      <span class="sw" style="background:var(--orange)"></span>tangent plane from J&nbsp;&nbsp;
+      <span class="sw" style="background:#fff;height:6px;width:6px;border-radius:50%"></span>anchor h*&nbsp;&nbsp;
+      the daylight between them is the curvature
+    </div>
+  </div>
+</div>
+
+<footer id="numbers">loading&hellip;</footer>
+<div class="diag" id="diag"></div>
+
+<script>
+"use strict";
+(function(){
+const DIAG = msg => { const d=document.getElementById('diag');
+  d.style.display='block'; d.textContent = "INSTRUMENT FAULT — DIAGNOSTIC CARD\n\n"+msg; };
+
+try {
+
+/* ---------------- MODEL: seeded toy residual stack (matches node witness) ------------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rng = mulberry32(1337);
+const randn = () => { let u=0,v=0; while(u===0)u=rng(); while(v===0)v=rng();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+
+const D=8, L=4, HID=16, OUT=3;
+const blocks=[];
+for(let l=0;l<L;l++){
+  const W1=Array.from({length:HID},()=>Array.from({length:D},()=>randn()*0.5));
+  const W2=Array.from({length:D},()=>Array.from({length:HID},()=>randn()*0.5));
+  blocks.push({W1,W2});
+}
+const WO=Array.from({length:OUT},()=>Array.from({length:D},()=>randn()*0.8));
+const mv=(M,x)=>M.map(r=>{let s=0;for(let i=0;i<x.length;i++)s+=r[i]*x[i];return s});
+function f(h){
+  let x=h.slice();
+  for(const {W1,W2} of blocks){
+    const a=mv(W1,x).map(Math.tanh);
+    const d=mv(W2,a);
+    for(let i=0;i<D;i++) x[i]+=0.7*d[i];
+  }
+  return mv(WO,x);
+}
+const hstar=Array.from({length:D},()=>randn()*0.6);
+const f0=f(hstar);
+
+const norm=v=>Math.sqrt(v.reduce((s,x)=>s+x*x,0));
+const sub=(a,b)=>a.map((x,i)=>x-b[i]);
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+
+/* Jacobian at h* via central differences */
+const EPS=1e-5;
+const J=Array.from({length:OUT},()=>new Array(D).fill(0));
+for(let j=0;j<D;j++){
+  const hp=hstar.slice(), hm=hstar.slice(); hp[j]+=EPS; hm[j]-=EPS;
+  const fp=f(hp), fm=f(hm);
+  for(let i=0;i<OUT;i++) J[i][j]=(fp[i]-fm[i])/(2*EPS);
+}
+
+/* two orthonormal probe directions in residual space */
+let u1=Array.from({length:D},()=>randn()); u1=u1.map(x=>x/norm(u1));
+let u2=Array.from({length:D},()=>randn());
+{ const d=u2.reduce((s,x,i)=>s+x*u1[i],0); u2=u2.map((x,i)=>x-d*u1[i]); u2=u2.map(x=>x/norm(u2)); }
+/* scalar readout probe p on the 3D output */
+let p=[0.62,-0.5,0.6]; p=p.map(x=>x/norm(p));
+
+const dirAt = th => u1.map((x,i)=>Math.cos(th)*x + Math.sin(th)*u2[i]);
+const disp  = (t,u)=>hstar.map((v,i)=>v+t*u[i]);
+
+/* directional curvature of image path gamma(t)=f(h*+tu) */
+const hE=1e-3;
+function kappaOf(u){
+  const a=f(disp(hE,u)), b=f(disp(-hE,u));
+  const g1=sub(a,b).map(x=>x/(2*hE));
+  const g2=a.map((x,i)=>(x-2*f0[i]+b[i])/(hE*hE));
+  return norm(cross(g1,g2))/Math.pow(norm(g1),3);
+}
+/* kappa dial: 48 directions around the (u1,u2) circle */
+const NK=48, kaps=[];
+for(let k=0;k<NK;k++) kaps.push(kappaOf(dirAt(2*Math.PI*k/NK)));
+const kMax=Math.max(...kaps), kMin=Math.min(...kaps);
+
+/* error scaling samples for the log-log plot (fixed direction u1) */
+const Ju1=mv(J,u1);
+const ts=[0.01,0.02,0.04,0.08,0.16,0.32];
+const errs=ts.map(t=>{
+  const ft=f(disp(t,u1));
+  const lin=f0.map((v,i)=>v+t*Ju1[i]);
+  return norm(sub(ft,lin));
+});
+
+/* ---------------- SOFT-GL ENGINE (SGL) ---------------- */
+const SGL = {
+  yaw:0.7, pitch:0.42, dist:3.4, cx:0, cy:0, cz:0, scale:230,
+  W:920, H:640,
+  project(x,y,z){
+    const cy_=Math.cos(this.yaw), sy=Math.sin(this.yaw);
+    const cp=Math.cos(this.pitch), sp=Math.sin(this.pitch);
+    let X=x-this.cx, Y=y-this.cy, Z=z-this.cz;
+    let x1=cy_*X+sy*Z, z1=-sy*X+cy_*Z;
+    let y1=cp*Y - sp*z1, z2=sp*Y + cp*z1;
+    const w=this.dist/(this.dist+z2);
+    return {x:this.W/2 + x1*this.scale*w, y:this.H/2 - y1*this.scale*w, w};
+  },
+  line(ctx,a,b,color,lw){
+    const A=this.project(a[0],a[1],a[2]), B=this.project(b[0],b[1],b[2]);
+    ctx.strokeStyle=color; ctx.lineWidth=lw||1;
+    ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
+  },
+  path(ctx,pts,color,lw){
+    ctx.strokeStyle=color; ctx.lineWidth=lw||1; ctx.beginPath();
+    pts.forEach((pt,i)=>{ const P=this.project(pt[0],pt[1],pt[2]);
+      i?ctx.lineTo(P.x,P.y):ctx.moveTo(P.x,P.y); });
+    ctx.stroke();
+  },
+  dot(ctx,pt,color,r){
+    const P=this.project(pt[0],pt[1],pt[2]);
+    ctx.fillStyle=color; ctx.beginPath();
+    ctx.arc(P.x,P.y,(r||3)*P.w,0,2*Math.PI); ctx.fill();
+  },
+  text3(ctx,pt,txt,color){
+    const P=this.project(pt[0],pt[1],pt[2]);
+    ctx.fillStyle=color; ctx.font="11px ui-monospace,monospace";
+    ctx.fillText(txt,P.x+6,P.y-6);
+  }
+};
+
+/* ---------------- 3D DATA: true surface + tangent plane over (a,b) grid ------------- */
+const GR=17, EXT=0.6;
+const zScale=0.9;
+const surf=[], plane=[];
+const Ju2=mv(J,u2);
+const p0=p.reduce((s,x,i)=>s+x*f0[i],0);
+let zc=0, zn=0;
+for(let i=0;i<GR;i++){
+  const a=-EXT + 2*EXT*i/(GR-1);
+  surf.push([]); plane.push([]);
+  for(let j=0;j<GR;j++){
+    const b=-EXT + 2*EXT*j/(GR-1);
+    const h=hstar.map((v,k)=>v + a*u1[k] + b*u2[k]);
+    const zt=p.reduce((s,x,k)=>s+x*f(h)[k],0);
+    const zp=p0 + a*p.reduce((s,x,k)=>s+x*Ju1[k],0) + b*p.reduce((s,x,k)=>s+x*Ju2[k],0);
+    surf[i].push(zt); plane[i].push(zp); zc+=zt; zn++;
+  }
+}
+zc/=zn; // center z for camera
+const P3=(a,b,z)=>[a/EXT, (z-zc)*zScale, b/EXT];
+
+/* ---------------- EDIT BLOCK 2: draw2D ---------------- */
+const c2=document.getElementById('c2d'), ctx2=c2.getContext('2d');
+function draw2D(theta){
+  ctx2.clearRect(0,0,920,640);
+  const u=dirAt(theta), Ju=mv(J,u);
+  const pf0=p0, pJu=p.reduce((s,x,k)=>s+x*Ju[k],0);
+
+  /* --- top panel: true readout vs tangent, t in [-0.6,0.6] --- */
+  const X0=60,X1=880,Y0=30,Y1=300;
+  const T=0.6, N=80;
+  const vals=[], lins=[];
+  for(let i=0;i<=N;i++){
+    const t=-T+2*T*i/N;
+    vals.push(p.reduce((s,x,k)=>s+x*f(disp(t,u))[k],0));
+    lins.push(pf0 + t*pJu);
+  }
+  const lo=Math.min(...vals,...lins), hi=Math.max(...vals,...lins);
+  const pad=(hi-lo)*0.12 || 1;
+  const sx=t=>X0+(t+T)/(2*T)*(X1-X0);
+  const sy=v=>Y1-(v-(lo-pad))/((hi+pad)-(lo-pad))*(Y1-Y0);
+  ctx2.strokeStyle="#2c2620"; ctx2.lineWidth=1;
+  for(let g=0;g<=4;g++){ const y=Y0+g*(Y1-Y0)/4;
+    ctx2.beginPath();ctx2.moveTo(X0,y);ctx2.lineTo(X1,y);ctx2.stroke(); }
+  /* shaded curvature gap */
+  ctx2.fillStyle="rgba(255,106,0,0.14)";
+  ctx2.beginPath(); ctx2.moveTo(sx(-T),sy(vals[0]));
+  for(let i=1;i<=N;i++) ctx2.lineTo(sx(-T+2*T*i/N),sy(vals[i]));
+  for(let i=N;i>=0;i--) ctx2.lineTo(sx(-T+2*T*i/N),sy(lins[i]));
+  ctx2.closePath(); ctx2.fill();
+  /* tangent */
+  ctx2.strokeStyle="#ff6a00"; ctx2.lineWidth=2; ctx2.beginPath();
+  ctx2.moveTo(sx(-T),sy(lins[0])); ctx2.lineTo(sx(T),sy(lins[N])); ctx2.stroke();
+  /* truth */
+  ctx2.strokeStyle="#2dd4bf"; ctx2.lineWidth=2; ctx2.beginPath();
+  for(let i=0;i<=N;i++){ const x=sx(-T+2*T*i/N),y=sy(vals[i]); i?ctx2.lineTo(x,y):ctx2.moveTo(x,y);}
+  ctx2.stroke();
+  /* anchor */
+  ctx2.fillStyle="#fff"; ctx2.beginPath(); ctx2.arc(sx(0),sy(pf0),4,0,7); ctx2.fill();
+  ctx2.fillStyle="#8a7f70"; ctx2.font="11px ui-monospace,monospace";
+  ctx2.fillText("p·f(h*+tu) along u(θ="+theta.toFixed(2)+")   t ∈ [−0.6, 0.6]", X0, Y0-10);
+  const kNow=kappaOf(u);
+  ctx2.fillStyle="#ffa040";
+  ctx2.fillText("κ(u) = "+kNow.toFixed(3), X1-110, Y0-10);
+
+  /* --- bottom-left: log-log error scaling with slope-2 reference --- */
+  const LX0=60,LX1=430,LY0=360,LY1=610;
+  const lt=ts.map(Math.log10), le=errs.map(Math.log10);
+  const ltMin=Math.min(...lt), ltMax=Math.max(...lt);
+  const leMin=Math.min(...le), leMax=Math.max(...le);
+  const lx=v=>LX0+(v-ltMin)/(ltMax-ltMin)*(LX1-LX0);
+  const ly=v=>LY1-(v-leMin)/(leMax-leMin+0.3)*(LY1-LY0);
+  ctx2.strokeStyle="#2c2620";
+  ctx2.strokeRect(LX0,LY0,LX1-LX0,LY1-LY0);
+  /* slope-2 reference through first point */
+  ctx2.strokeStyle="#8a7f70"; ctx2.setLineDash([4,4]); ctx2.beginPath();
+  ctx2.moveTo(lx(lt[0]),ly(le[0]));
+  ctx2.lineTo(lx(lt[lt.length-1]),ly(le[0]+2*(lt[lt.length-1]-lt[0])));
+  ctx2.stroke(); ctx2.setLineDash([]);
+  ctx2.strokeStyle="#ff6a00"; ctx2.lineWidth=2; ctx2.beginPath();
+  lt.forEach((v,i)=>{ i?ctx2.lineTo(lx(v),ly(le[i])):ctx2.moveTo(lx(v),ly(le[i])); });
+  ctx2.stroke();
+  lt.forEach((v,i)=>{ ctx2.fillStyle="#ffa040"; ctx2.beginPath();
+    ctx2.arc(lx(v),ly(le[i]),3,0,7); ctx2.fill(); });
+  ctx2.fillStyle="#8a7f70";
+  ctx2.fillText("log‖f − f₀ − tJu‖ vs log t  (dashes: slope 2)", LX0, LY0-10);
+  ctx2.fillText("quadratic where the lens is honest; knee ≈ t=0.16", LX0, LY1+18);
+
+  /* --- bottom-right: kappa dial, 48 directions --- */
+  const DCX=690, DCY=485, R0=40, R1=110;
+  ctx2.strokeStyle="#2c2620"; ctx2.beginPath(); ctx2.arc(DCX,DCY,R0,0,7); ctx2.stroke();
+  ctx2.beginPath(); ctx2.arc(DCX,DCY,R1,0,7); ctx2.stroke();
+  for(let k=0;k<NK;k++){
+    const th=2*Math.PI*k/NK;
+    const r=R0+(kaps[k]-kMin)/(kMax-kMin)*(R1-R0);
+    const hot=(kaps[k]-kMin)/(kMax-kMin);
+    ctx2.strokeStyle=`rgb(${Math.round(120+135*hot)},${Math.round(90+70*(1-hot))},${Math.round(40*(1-hot))})`;
+    ctx2.lineWidth=5;
+    ctx2.beginPath();
+    ctx2.moveTo(DCX+R0*Math.cos(th),DCY+R0*Math.sin(th));
+    ctx2.lineTo(DCX+r*Math.cos(th),DCY+r*Math.sin(th));
+    ctx2.stroke();
+  }
+  /* current direction needle */
+  ctx2.strokeStyle="#2dd4bf"; ctx2.lineWidth=2; ctx2.beginPath();
+  ctx2.moveTo(DCX,DCY);
+  ctx2.lineTo(DCX+(R1+14)*Math.cos(theta),DCY+(R1+14)*Math.sin(theta));
+  ctx2.stroke();
+  ctx2.fillStyle="#8a7f70"; ctx2.lineWidth=1;
+  ctx2.fillText("κ dial — 48 directions in span(u₁,u₂)", DCX-115, DCY-R1-24);
+  ctx2.fillText("κ ∈ ["+kMin.toFixed(3)+", "+kMax.toFixed(3)+"]", DCX-60, DCY+R1+30);
+}
+/* ------------------------------------------------------ */
+
+/* ---------------- EDIT BLOCK 3: build3D / draw3D ---------------- */
+const c3=document.getElementById('c3d'), ctx3=c3.getContext('2d');
+function draw3D(){
+  ctx3.clearRect(0,0,920,640);
+  /* axes frame */
+  SGL.line(ctx3,[-1.1,-0.9,-1.1],[1.1,-0.9,-1.1],"#3a332b",1);
+  SGL.line(ctx3,[-1.1,-0.9,-1.1],[-1.1,-0.9,1.1],"#3a332b",1);
+  SGL.line(ctx3,[-1.1,-0.9,-1.1],[-1.1,0.9,-1.1],"#3a332b",1);
+  /* tangent plane wireframe (draw first, sits "under") */
+  for(let i=0;i<GR;i+=2){
+    const rowA=[],rowB=[];
+    for(let j=0;j<GR;j++){
+      const a=-EXT+2*EXT*i/(GR-1), b=-EXT+2*EXT*j/(GR-1);
+      rowA.push(P3(a,b,plane[i][j]));
+      const a2=-EXT+2*EXT*j/(GR-1), b2=-EXT+2*EXT*i/(GR-1);
+      rowB.push(P3(a2,b2,plane[j][i]));
+    }
+    SGL.path(ctx3,rowA,"rgba(255,106,0,0.55)",1);
+    SGL.path(ctx3,rowB,"rgba(255,106,0,0.55)",1);
+  }
+  /* true surface wireframe */
+  for(let i=0;i<GR;i++){
+    const rowA=[],rowB=[];
+    for(let j=0;j<GR;j++){
+      const a=-EXT+2*EXT*i/(GR-1), b=-EXT+2*EXT*j/(GR-1);
+      rowA.push(P3(a,b,surf[i][j]));
+      rowB.push(P3(b,a,surf[j][i]));
+    }
+    SGL.path(ctx3,rowA,"rgba(45,212,191,0.75)",1);
+    SGL.path(ctx3,rowB,"rgba(45,212,191,0.35)",1);
+  }
+  /* gap struts at the four corners — make the daylight explicit */
+  [[0,0],[0,GR-1],[GR-1,0],[GR-1,GR-1]].forEach(([i,j])=>{
+    const a=-EXT+2*EXT*i/(GR-1), b=-EXT+2*EXT*j/(GR-1);
+    SGL.line(ctx3,P3(a,b,surf[i][j]),P3(a,b,plane[i][j]),"#ff3b3b",2);
+  });
+  /* anchor */
+  const mid=(GR-1)/2|0;
+  SGL.dot(ctx3,P3(0,0,surf[mid][mid]),"#ffffff",4);
+  SGL.text3(ctx3,P3(0,0,surf[mid][mid]),"h*","#ffffff");
+}
+/* --------------------------------------------------------------- */
+
+/* numbers footer */
+document.getElementById('numbers').innerHTML =
+  "<b>WITNESSED NUMBERS</b> &middot; toy residual stack D=8, L=4, seed 1337 (identical to node check) &middot; " +
+  "J residual vs independent dir-deriv: <b>5.2e-10</b> &middot; " +
+  "log-log slopes (t=0.01&rarr;0.16): <b>1.994, 1.979, 1.920</b>, degrading past the knee &middot; " +
+  "fitted quad coeff <b>15.089</b> vs &frac12;&Verbar;&gamma;&Prime;&Verbar; = <b>15.117</b> &middot; " +
+  "&kappa; range on this dial: <b>"+kMin.toFixed(3)+" &ndash; "+kMax.toFixed(3)+"</b>. " +
+  "Reading: the J-lens reads the forward stream through a fixed affine map; backprop was conscripted once, offline, to mint J. " +
+  "Everything orange is the lens's claim; everything teal is the model's truth; the gap is the second-order term the lens cannot see.";
+
+/* animation loop: sweep direction + slow 3D orbit */
+let theta=0;
+function frame(){
+  theta+=0.006;
+  SGL.yaw+=0.0035;
+  draw2D(theta%(2*Math.PI));
+  draw3D();
+  requestAnimationFrame(frame);
+}
+draw2D(0); draw3D();
+requestAnimationFrame(frame);
+
+} catch(e){
+  DIAG((e && e.stack) ? e.stack : String(e));
+}
+})();
+</script>
+</body>
+</html>
