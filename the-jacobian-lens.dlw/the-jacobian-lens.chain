@@ -2,8 +2,8 @@ ROOT0-DLW-CHAIN-v1
 index : 1186
 slug  : the-jacobian-lens
 seal  : 884cd5e5935226a92fa46d6afb6195d3ce5a86f9150096c06bd2f48bdc4affff
-prev  : 6dbbc4fa47aab567bcf32544d496671dedf9181ce329ec5d686ec5dc310fdb6a
-link  : 018a672b70b03b57c4daeb963f0bedc323bb950aacaccf10cba7fc72f3e4cca5
-head  : 324d76a71627b993d22bc11c1290d4d2fd4b411ba959c6e859c3f0a71c1f72dc
+prev  : f857b1d2133d29764a56da15f57cb03b4988058d34d744cd7712d82732fc6860
+link  : 74ceda1e24f37dfb0e94aa651207934c3fa929ea74cfdb24db785baa4f053c7c
+head  : c4d41afeaef76470528856d54d86cf480a0e1c2fc8ebc60fbb9eb8e442585f2b
 
 — the tether: link = sha256(index|slug|seal|prev). the chain head commits to the whole corpus.
